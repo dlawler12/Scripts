@@ -1,0 +1,168 @@
+/*
+	Sleep Study Closed Loop Script
+	Written by Dan Lawler with help from Allison Marley
+	Summer 2015
+	Albrecht Lab
+ */
+
+import org.micromanager.api.*;
+import java.lang.*;
+import ij.*;
+import ij.io.FileSaver; 
+import org.micromanager.utils.ImageUtils; 
+import ij.process.ImageProcessor; 
+import ij.ImagePlus;
+
+gui.setImageSavingFormat(org.micromanager.acquisition.TaggedImageStorageDiskDefault.class);
+
+
+//Load GUI //
+int testover=0; // a variable to check to make sure a stimulus script has run
+int guiover=0; // a variable to check to make sure the gui has applied acquisition settings
+gui.sleep(500);
+bg("C:/MicroManager Control Scripts/GUI_DA.bsh"); // prompt the user for acquisition settings for stimulus application
+while (guiover<1){
+		gui.sleep(1);
+	}
+guiover=0;
+
+//Load camera + settings //
+// Ask for file location, framerate, exposure, test duration
+// Parameters
+cameraName = mmc.getCameraDevice(); 
+mmc.setProperty(cameraName, "OUTPUT TRIGGER KIND[0]", "EXPOSURE");
+mmc.setProperty(cameraName, "Binning", "2x2");
+mmc.setProperty(cameraName, "Exposure", "20");
+int trialhours = 12;
+int intervalMs = 10000; // 10000 ms = 10 s frame interval
+int numFrames = trialhours*60*60/(intervalMs/1000);
+port = mmc.getProperty("ArduinoValveControl", "ShowPort"); //find com port of arduino
+mmc.setSerialPortCommand(port,"_B","/n"); //start test with brightfield illumination on
+Thread.sleep(1000);
+
+
+// File Locations
+drive="D:/";
+root="072519/TimeLapseImages"; //edit date
+firstimage="img_000000000__000.tif";
+rootDirName="D:/072519"; //edit date
+acqName = "TimeLapseImages";
+int range = 3; //3 frames captured
+int breakminutes = 15; //minimum break time post stimulus
+
+//Testing loop
+
+// Clear all previous acquisitions
+gui.closeAllAcquisitions();
+gui.clearMessageWindow();
+
+
+String decision="";
+int hasBeenAwake=0;
+int sleepCounter=0;
+gui.openAcquisition(acqName, rootDirName, numFrames, 1, 1, true, true);
+int count = 0;
+int sleeps = 0;
+int awakeOrSleep = 0;
+String filler="";
+int imgcounter = 1;
+IJ.run("Set Measurements...", "area mean min centroid integrated stack limit redirect=None decimal=3"); // ensure all of the necessary measurement variables are outputed by imageJ
+for(int i=0; i<numFrames; i++) {
+	mmc.setSerialPortCommand(port,"~b20000","/n"); //manually set exposure of brightfield to 20 ms
+	now=System.currentTimeMillis();
+	cameraName = mmc.getCameraDevice(); 
+	mmc.setProperty(cameraName, "OUTPUT TRIGGER KIND[0]", "EXPOSURE");
+	mmc.setProperty(cameraName, "Binning", "2x2");
+	mmc.setProperty(cameraName, "Exposure", "20");
+	gui.snapAndAddImage(acqName,i,0,0,0);
+	count++;
+	//call image processing imagej macros
+	if (count>2){ //as long as you have 3 frames
+		if (sleeps>0){
+			sleepsno=Integer.toString(sleeps); // sleeps variable adjusts the name of the file in the script as Micromanager automatically does for timelapse acquisition folders
+			Ourfile = drive+root+"_"+sleepsno+"/"+firstimage;
+		}
+		else{
+			Ourfile = drive+root+"/"+firstimage;
+		}
+		imageno=Integer.toString(i-imgcounter);
+		IJ.run("Image Sequence...", "open="+Ourfile+" number="+range+" starting="+imageno+" increment=1 scale=25 file[] sort"); //load images in imageJ
+		Prefs.blackBackground = false;
+		decision = IJ.runMacroFile("D:\\DanStuff\\test.ijm"); //run image processing script
+		print(decision); // print decison below
+	// Code to flip decision each time here
+		if (awakeOrSleep>0) //this script simply reverses the state that is being searched for each time, so you alternate between stimulus captures of sleep or wake states
+			if (decision.equals("Awake")){
+				decision="Sleep";
+			}
+			else{
+				decision="Awake";
+			}
+	//
+		if (decision.equals("Awake")){ // in this case "Awake" really means the incorrect state, but is simplified for processing by the if statement above
+			hasBeenAwake=1; // always make sure the animal exhibits both behaviors before transition is captured and stimulated
+			sleepCounter=0;
+			itTook = System.currentTimeMillis()-now;
+			gui.sleep(intervalMs - itTook);
+			}
+		else if (hasBeenAwake==1 && sleepCounter>5){ // once this is true, stimulation initiates
+			
+			mmc.setSerialPortCommand(port,"_F","/n"); //illumination source is changed to fluorescent blue light
+			gui.sleep(1000);
+			bg("C:/MicroManager Control Scripts/GUI_DAquick.bsh"); //re-apply gui settings
+			while (guiover<1){
+				Thread.sleep(1);
+			}
+			gui.setImageSavingFormat(org.micromanager.acquisition.TaggedImageStorageMultipageTiff.class); //change image format to stacks rather than individual images for stimulus capture
+			bg("C:/MicroManager Control Scripts/Run_DA.bsh"); // run stimulus capture protocol
+			while (testover<1){
+				Thread.sleep(1);
+				}
+			mmc.setSerialPortCommand(port,"_B","/n"); // switch back to brightfield illumination source
+			hasBeenAwake=0;
+			testover=0;
+			guiover=0;
+			count=0;
+			imgcounter=i+2;
+			sleeps++;
+			awakeOrSleep=1-awakeOrSleep;
+			print(sleeps);
+			if ((i+1)<10){
+				filler="00000000";}
+			else if ((i+1)<100){
+				filler="0000000";}
+			else if ((i+1)<1000){
+				filler="000000";}
+			else if ((i+1)<10000){
+				filler="00000";}
+			else if ((i+1)<100000){
+				filler="0000";}
+			else if ((i+1)<1000000){
+				filler="000";}
+			firstimage="img_"+filler+Integer.toString(i+1)+"__000.tif";
+			gui.closeAllAcquisitions();
+			gui.clearMessageWindow();
+			serialWrite(vport, "v2on"); // make sure the waste in valve 2 is left open
+			gui.setImageSavingFormat(org.micromanager.acquisition.TaggedImageStorageDiskDefault.class); // return image format to indiviual images
+			itTook = System.currentTimeMillis()-now;
+			//gui.sleep(intervalMs*4 - itTook); // would assume 30 second trial no break
+			//numFrames = numFrames - 3; //would assume 30 second trial no break
+			mmc.setSerialPortCommand(port,"_B","/n"); // in case script missed the earlier command to swtich to brightfield illumination source
+			gui.sleep(breakminutes*60000 - itTook); // take your break after the stimulus
+			numFrames = numFrames - (breakminutes*60000)/intervalMs; //adjust total trial length
+			gui.openAcquisition(acqName, rootDirName, numFrames, 1, 1, true, true); // re-open acquisition
+		}
+		else{
+			sleepCounter++;
+			itTook = System.currentTimeMillis()-now;
+			gui.sleep(intervalMs - itTook);
+		}
+	}
+	else {
+		itTook = System.currentTimeMillis()-now;
+		gui.sleep(intervalMs - itTook);
+	}
+}
+
+gui.setImageSavingFormat(org.micromanager.acquisition.TaggedImageStorageMultipageTiff.class);
+serialWrite(vport, "v2off"); //close outflow
